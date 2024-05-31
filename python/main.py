@@ -58,7 +58,7 @@ async def get_financial_statement(request: Request, ticker: str, statement: str,
     # Convert data to JSON array using simplejson
     data['index'] = data['index'].astype(str)  # Convert Timestamp to string
     json_data = json.dumps(data.to_dict(orient='records'), ignore_nan=True)
-    return json.loads(json_data)  # Ensure the response is a valid JSON object # Ensure the response is a valid JSON object
+    return json.loads(json_data)  # Ensure the response is a valid JSON object
 
 def process_symbol(symbol: str):
     symbol = symbol.upper()
@@ -132,7 +132,6 @@ def lin_reg_data(symbols, start, end, index, stockWeights):
             stock_data = yf.download(symbols, start=start_date, end=end_date)['Adj Close']
             stock_data = stock_data.rename(columns={symbols[1]: 'Adj Close'})
     stock_data = stock_data.dropna()
-    print(stock_data.columns)
     stocks_df = pd.DataFrame({
             'Dependent': stock_data['Adj Close'],
             'Independent': stock_data[index]
@@ -156,9 +155,7 @@ async def lin_reg(stocks: str, index: str, start: str, end: str, stockWeights: s
 
 @app.get("/famafrench")
 async def fama_french(stockWeights: str, start: str, end: str):
-    print(start)
     stock_weights = json.loads(stockWeights)
-    print("stock weights", stock_weights)
     ff3_monthly = pd.DataFrame(gff.famaFrench3Factor(frequency='m'))
     ff3_monthly.rename(columns={'date_ff_factors':'Date'}, inplace=True)
     ff3_monthly.set_index('Date', inplace=True)
@@ -166,21 +163,15 @@ async def fama_french(stockWeights: str, start: str, end: str):
     size_premium = ff3_monthly['SMB'].mean()
     value_premium = ff3_monthly['HML'].mean()
     stocks = list(stock_weights.keys())
-    print("stock keys", stocks)
     start = dt.datetime.strptime(start, '%Y-%m-%d')
     end = dt.datetime.strptime(end, '%Y-%m-%d')
     uw_portfolio = yf.download(stocks, start=start, end=end)['Adj Close'].pct_change()[1:]
-    print("uw portfolio", uw_portfolio)
-    print("stock weights", stock_weights)
-    print("pd series", pd.Series(stock_weights))
     if len(stocks) == 1:
         weighted_returns = uw_portfolio * stock_weights[stocks[0]]
         portfolio = pd.DataFrame({'Portfolio': weighted_returns})
     else:
         weighted_returns = uw_portfolio * pd.Series(stock_weights)
         portfolio = pd.DataFrame({'Portfolio': weighted_returns.sum(axis=1)})
-    print("weighted returns", weighted_returns)
-    print("portfolio", portfolio)
     portfolio_mtl = portfolio.resample('M').agg(lambda x: (x + 1).prod() - 1)
     factors = pdr.DataReader('F-F_Research_Data_Factors', 'famafrench', start, end)[0][1:]
 
@@ -216,7 +207,4 @@ async def fama_french(stockWeights: str, start: str, end: str):
 if __name__ == "__main__":
     load_dotenv()
     PORT = int(os.getenv("PORT", 8000))
-    print(os.environ.get('PORT'))
-    print(f"os.environ.get('PORT'): {os.environ.get('PORT')}")
     uvicorn.run(app, host="0.0.0.0", port=PORT)
-    print(f"process id: {os.getpid()}")

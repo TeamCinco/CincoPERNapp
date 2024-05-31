@@ -5,7 +5,7 @@ import UserInput from '../components/UserInput.jsx';
 import { useTable } from 'react-table';
 import '../customStyles.css';
 
-const API_KEY = "your openai api key";
+const API_KEY = "your-openai-api-key";
 
 async function fetchFinancialStatement(ticker, statementType, frequency) {
   try {
