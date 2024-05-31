@@ -1,40 +1,30 @@
-# give me all the pip installs for this file
 from typing import Union
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import pandas_datareader.data as pdr
 import datetime as dt
 import yfinance as yf
 import numpy as np
-# from sklearn.linear_model import LinearRegression
 import getFamaFrenchFactors as gff
 import pandas as pd
-import urllib3
-import json
-import requests
+import simplejson as json
 from yahooquery import Ticker 
 import statsmodels.api as sma
 import uvicorn
-import gunicorn
 from dotenv import load_dotenv
 import os
 
-
-
-
-
-# run this script with uvicorn main:app --reload to start the server
-
 app = FastAPI()
 
-
-
+# Allow CORS for local development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],  
-    allow_headers=["*"],  
+    allow_origins=["*"],  # Adjust this to your frontend URL in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
 @app.get("/stockinfo")
 async def stock_info(symbol: str):
     symbol = process_symbol(symbol)
@@ -47,17 +37,28 @@ async def stock_graph(symbol: str, start: str, end: str):
     stock = fetch_stock_graph(symbol, start, end)
     return stock
 
-@app.get("/financials")
-def income_statement(symbol: str, statement: str, quarterly: bool):
-    quarterly = True if quarterly else False
-    if statement == 'income':
-        stock = Ticker(symbol).income_statement('q' if quarterly else 'a')
-    elif statement == 'balance':
-        stock = Ticker(symbol).balance_sheet('q' if quarterly else 'a')
-    elif statement == 'cash':
-        stock = Ticker(symbol).cash_flow('q' if quarterly else 'a')
-    stock.reset_index(inplace=True)
-    return stock.to_json(orient='records')
+@app.get("/financial_statement")
+async def get_financial_statement(request: Request, ticker: str, statement: str, frequency: str):
+    stock = yf.Ticker(ticker)
+    data_map = {
+        'balanceSheet': stock.balance_sheet,
+        'incomeStatement': stock.financials,
+        'cashflowStatement': stock.cashflow
+    }
+
+    data = data_map.get(statement + ('' if frequency == 'annual' else '_quarterly'))
+    if data is None or data.empty:
+        raise HTTPException(status_code=404, detail="No data found")
+
+    # Properly format the data for client-side processing
+    data = data.transpose()  # Transpose to make dates the columns if necessary
+    data.reset_index(inplace=True)
+    data.columns = [str(col).replace(' ', '_').lower() for col in data.columns]  # Ensure column names are consistent
+    
+    # Convert data to JSON array using simplejson
+    data['index'] = data['index'].astype(str)  # Convert Timestamp to string
+    json_data = json.dumps(data.to_dict(orient='records'), ignore_nan=True)
+    return json.loads(json_data)  # Ensure the response is a valid JSON object # Ensure the response is a valid JSON object
 
 def process_symbol(symbol: str):
     symbol = symbol.upper()
@@ -97,7 +98,6 @@ async def stock_weights(stocks):
     stocks = {key: value for key, value in stocks.items()}
     return stocks
 
-
 def lin_reg_data(symbols, start, end, index, stockWeights):
     start_date = dt.datetime.strptime(start, '%Y-%m-%d')
     end_date = dt.datetime.strptime(end, '%Y-%m-%d')
@@ -105,7 +105,7 @@ def lin_reg_data(symbols, start, end, index, stockWeights):
     if len(stockWeights) > 0 and stockWeights != '{}':
         using_weights = True
         stock_weights = json.loads(stockWeights)
-    if index == 'UNRATE' or index == 'CPIAUCSL' or index == 'PPIACO' or index == 'FEDFUNDS' or index == 'GDP' or index == 'USEPUINDXD' or index == 'VIXCLS':
+    if index in ['UNRATE', 'CPIAUCSL', 'PPIACO', 'FEDFUNDS', 'GDP', 'USEPUINDXD', 'VIXCLS']:
         index_data = pdr.DataReader(index, 'fred', start, end)
         index_data.index = index_data.index.rename('Date')
         if using_weights:
@@ -115,7 +115,7 @@ def lin_reg_data(symbols, start, end, index, stockWeights):
             stocks = stocks.sum(axis=1)
             stocks = pd.DataFrame({'Adj Close': stocks})
             index_data = index_data.pct_change()
-        else :
+        else:
             stocks = yf.download(stocks, start=start_date, end=end_date)['Adj Close']
         stock_data = pd.merge(stocks, index_data, on='Date')
     else:
@@ -128,7 +128,7 @@ def lin_reg_data(symbols, start, end, index, stockWeights):
             index_data = yf.download(index, start=start_date, end=end_date)['Adj Close']
             index_data = index_data.pct_change()
             stock_data[index] = index_data
-        else: 
+        else:
             stock_data = yf.download(symbols, start=start_date, end=end_date)['Adj Close']
             stock_data = stock_data.rename(columns={symbols[1]: 'Adj Close'})
     stock_data = stock_data.dropna()
@@ -139,7 +139,6 @@ def lin_reg_data(symbols, start, end, index, stockWeights):
         })
     if using_weights: stock_data = stock_data * 100
     return stocks_df, stock_data
-
 
 @app.get("/linreg")
 async def lin_reg(stocks: str, index: str, start: str, end: str, stockWeights: str):
@@ -154,7 +153,6 @@ async def lin_reg(stocks: str, index: str, start: str, end: str, stockWeights: s
     sorted_stocks = stock_data.sort_values(by=index, ascending=True)
     json_data = sorted_stocks.reset_index(drop=True).to_json(date_format='iso', orient='values')
     return json_data, values
-
 
 @app.get("/famafrench")
 async def fama_french(stockWeights: str, start: str, end: str):
@@ -212,12 +210,8 @@ async def fama_french(stockWeights: str, start: str, end: str):
                'pvalues': pvalues,
                'sharpe': sharpe,}
     port_data['Portfolio'] = port_data['Portfolio'] * 100
-    json_data = port_data.to_json( orient='index')
+    json_data = port_data.to_json(orient='index')
     return json_data, results
-
-
-
-
 
 if __name__ == "__main__":
     load_dotenv()
@@ -226,12 +220,3 @@ if __name__ == "__main__":
     print(f"os.environ.get('PORT'): {os.environ.get('PORT')}")
     uvicorn.run(app, host="0.0.0.0", port=PORT)
     print(f"process id: {os.getpid()}")
-
-
-
-    
-
-
-
-
-
